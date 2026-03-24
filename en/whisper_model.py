@@ -1,7 +1,7 @@
 import whisper
 
 class WhisperASR:
-    def __init__(self, model_name="base.en", device=None):
+    def __init__(self, model_name="base.en", device="cpu"):
         self.model = whisper.load_model(model_name)
         if device:
             self.model.to(device)
