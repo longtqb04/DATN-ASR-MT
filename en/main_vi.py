@@ -4,6 +4,7 @@ import json
 from typing import List
 
 import torch
+import soundfile as sf
 from tqdm import tqdm
 from pyannote.audio import Pipeline as DiarizationPipeline
 import pandas as pd
@@ -50,6 +51,31 @@ def diarization_to_df(diarization) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def load_audio(audio_path: str, target_sr: int = 16000):
+    """
+    Load audio without whisperx/torchcodec to avoid libtorchcodec runtime issues.
+    Returns:
+      - array_audio: 1D float32 numpy array
+      - waveform: (1, T) float32 torch tensor
+      - sample_rate: int
+    """
+    waveform, sr = sf.read(audio_path)
+
+    # Convert to mono
+    if len(waveform.shape) > 1:
+        waveform = waveform.mean(axis=1)
+
+    # Resample when sample rate differs
+    if sr != target_sr:
+        import librosa
+        waveform = librosa.resample(waveform, orig_sr=sr, target_sr=target_sr)
+        sr = target_sr
+
+    waveform = waveform.astype("float32")
+    tensor_waveform = torch.tensor(waveform, dtype=torch.float32).unsqueeze(0)
+    return waveform, tensor_waveform, sr
+
+
 class PhoWhisperPipeline:
     def __init__(self, model_name: str):
         self.device = 0 if torch.cuda.is_available() else -1
@@ -70,22 +96,18 @@ class PhoWhisperPipeline:
     def process_file(self, audio_path: str):
         utt_id = os.path.splitext(os.path.basename(audio_path))[0]
 
-        import whisperx
-
-        audio = whisperx.load_audio(audio_path)
+        audio, waveform, sr = load_audio(audio_path)
 
         result = self.asr({
             "array": audio,
-            "sampling_rate": 16000
+            "sampling_rate": sr
         })
 
         text = result["text"]
 
-        waveform = torch.tensor(audio, dtype=torch.float32).unsqueeze(0)
-
         diarization_result = self.diarization({
             "waveform": waveform,
-            "sample_rate": 16000
+            "sample_rate": sr
         })
 
         diarize_df = diarization_to_df(diarization_result)
